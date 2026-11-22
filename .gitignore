@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.rf-venv/
+build-rf/
+builds/
+dist/
+*.log
+.vscode/
+.idea/
+Thumbs.db

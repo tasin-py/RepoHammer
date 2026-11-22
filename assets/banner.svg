@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260" font-family="Segoe UI, Tahoma, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A84F5"/><stop offset="0.08" stop-color="#2D6FE6"/>
+      <stop offset="0.9" stop-color="#1D4FC2"/><stop offset="1" stop-color="#15399A"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="card"><rect width="1200" height="260" rx="18"/></clipPath>
+    <style>
+      .float { animation: float 5s ease-in-out infinite; }
+      .sweep { animation: sweep 6s ease-in-out infinite; }
+      @keyframes float { 0%,100% { transform: translateY(0px); } 50% { transform: translateY(-7px); } }
+      @keyframes sweep { 0% { transform: translateX(-500px); } 60%,100% { transform: translateX(1500px); } }
+    </style>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="1200" height="260" fill="url(#bg)"/>
+    <rect width="1200" height="3" fill="#7DB2FF"/>
+    <rect class="sweep" x="0" y="0" width="360" height="260" fill="url(#shine)" transform="skewX(-20)"/>
+    <g class="float">
+      <text x="600" y="118" text-anchor="middle" font-size="80" font-weight="700" fill="#FFFFFF">RepoHammer</text>
+      <text x="600" y="166" text-anchor="middle" font-size="27" fill="#DCE8FF">Paste a GitHub link. Get a finished build, on your own PC.</text>
+    </g>
+    <g font-size="17" fill="#FFFFFF" text-anchor="middle">
+      <rect x="329" y="192" width="180" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.14"/>
+      <text x="419" y="215">Auto-detects builds</text>
+      <rect x="521" y="192" width="198" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.14"/>
+      <text x="620" y="215">Asks before downloads</text>
+      <rect x="731" y="192" width="140" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.14"/>
+      <text x="801" y="215">Heals failures</text>
+    </g>
+  </g>
+</svg>
