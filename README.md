@@ -47,7 +47,7 @@ It's one small Python app with no packages to install. It uses about 45 MB of RA
   | Others | Flutter, Deno, Docker |
 
 - **Asks before downloading anything.** After checking the repo, RepoHammer lists the tools it needs with their approximate sizes. Press **Y** to download them with winget (Git, Node, the right .NET SDK, Visual Studio Build Tools, CMake, Inno Setup and more), or **N** to skip them and try other ways to build.
-- **Backs off and retries.** Each step has fallbacks (for example `npm ci` → `npm install` → `npm install --legacy-peer-deps`), and if one approach fails it moves on to the next.
+- **You decide what happens after a failure.** Each step has fallbacks (for example `npm ci` → `npm install` → `npm install --legacy-peer-deps`). If a whole strategy still fails, RepoHammer shows why and asks: **Retry**, **Try another way** (pick from the other strategies) or **Stop**. Untick **Ask when a build fails** to let it retry once after a fix and then move on by itself.
 - **Fixes common failures by itself:** missing .NET Framework reference assemblies, a newer .NET SDK needed, no Rust toolchain selected, Git long-path and ownership errors, and old webpack OpenSSL errors.
 - **Explains failures it can't fix,** for example *"The source code is incomplete: the project expects 3 file(s) that aren't in the download."*
 - **Collects the results** into `output\<repo>\<time>\`, with a full log of every build.
@@ -66,6 +66,10 @@ It's one small Python app with no packages to install. It uses about 45 MB of RA
 Before anything is downloaded, RepoHammer asks:
 
 <p align="center"><img src="docs/screenshots/download-question.png" alt="Dialog listing Zig (about 50 MB) as a needed download, with Yes and No buttons" width="470"></p>
+
+If a strategy fails, it tells you why and lets you choose what happens next:
+
+<p align="center"><img src="docs/screenshots/retry-question.png" alt="Build failed dialog with the reason, the fix RepoHammer applied, and Retry, Try another way and Stop buttons" width="596"></p>
 
 ## Install
 
@@ -91,7 +95,7 @@ To update later, open **About** and click **Check for Updates**. RepoHammer down
 1. Paste a GitHub link into **Source**, or click **Browse…** to pick a folder.
 2. Optionally change **Build in**, the folder where repos are cloned and built.
 3. Click **Build**. You'll see the live log, the elapsed time and an estimate.
-4. If tools are missing, RepoHammer lists them and asks first. Press **Y** to download them or **N** to skip them. To download without being asked, untick **Ask before downloading tools**.
+4. If tools are missing, RepoHammer lists them and asks first. Press **Y** to download them or **N** to skip them. To download without being asked, untick **Ask before downloads**.
 5. When it finishes, you'll hear a chime. Click **Open output** to see the built files.
 
 Use **Detect** to see which strategies RepoHammer would try without building, and **Strategy** to force a specific one.
@@ -127,15 +131,10 @@ Building a project runs that project's own build scripts on your PC, with your u
 The latest changes, ready to copy:
 
 ```text
-1.1.0
-- RepoHammer now asks before it downloads anything. After it works out how to build a repo, it lists the tools it needs with their approximate sizes. Press Y to download them or N to skip them, and RepoHammer then tries other ways to build that don't need them.
-- The same question covers every download: Git, .NET SDKs, Python versions, Inno Setup and the automatic fixes.
-- Detect shows what the first strategy would download.
-- On the command line, a [Y/n] prompt appears. Use --yes to allow downloads without asking.
-- The Source box starts empty each time the app opens.
-- Fixed the Toolchains tab sometimes staying on "checking...".
-- New name and icon: RepoHammer, with a hammer and lightning icon.
-- A chime plays when a build succeeds, instead of the Windows error sound.
+1.2.0
+- When a build strategy fails, RepoHammer now asks what to do: Retry, Try another way (choose which strategy) or Stop. It shows why it failed, what it fixed and how long the attempt took. Untick "Ask when a build fails" to keep the old automatic behaviour.
+- On the command line, the same question appears as [R]etry, [T]ry the next way, [S]top. Use --no-ask to skip it.
+- The download checkbox is now called "Ask before downloads", to make room for the new option.
 ```
 
 The full history is in [CHANGELOG.md](CHANGELOG.md).

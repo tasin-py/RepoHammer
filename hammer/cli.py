@@ -22,6 +22,33 @@ def ask(items, context):
         return False
 
 
+def ask_retry(info):
+    """Terminal version of the 'build failed - what now?' question."""
+    print()
+    print(f"{info['plan']} didn't work (attempt {info['attempt']}, took {info['secs']}s).")
+    for r in info["reasons"][:4]:
+        print(f"  - {r}")
+    if info["fixes"]:
+        print("  RepoHammer fixed: " + "; ".join(info["fixes"]) + ". Retrying should get further.")
+    if not sys.stdin or not sys.stdin.isatty():
+        return "retry" if (info["fixes"] and info["attempt"] == 1) else "next"
+    rest = info["remaining"]
+    if rest:
+        print("  Other ways to build: " + ", ".join(f"[{i}] {n}" for i, n in enumerate(rest, 1)))
+    prompt = "[R]etry, " + ("[T]ry the next way (or its number), " if rest else "") + "[S]top? "
+    try:
+        a = input(prompt).strip().lower()
+    except EOFError:
+        return "stop"
+    if a in ("r", "retry"):
+        return "retry"
+    if rest and a.isdigit() and 1 <= int(a) <= len(rest):
+        return ("plan", rest[int(a) - 1])
+    if rest and a in ("", "t", "n", "next"):
+        return "next"
+    return "stop"
+
+
 def main(argv):
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -35,6 +62,8 @@ def main(argv):
     b.add_argument("--yes", "-y", action="store_true", help="download needed tools without asking")
     b.add_argument("--no-install", action="store_true", help="never download tools (answer No)")
     b.add_argument("--fresh", action="store_true", help="delete any previous clone first")
+    b.add_argument("--no-ask", action="store_true",
+                   help="don't ask after a failure: retry once if a fix was applied, then try the next way")
     b.add_argument("--plan", help="force a specific strategy by name")
     b.add_argument("--workdir", default=build.DEFAULT_WORKDIR)
     d = sub.add_parser("detect", help="show how a repository would be built")
@@ -57,7 +86,8 @@ def main(argv):
                       + ("  (optional)" if any(getattr(a, "soft", False) for a in s) else ""))
         return 0 if plans else 1
     confirm = None if (a.yes or a.no_install) else ask
-    res = build.Builder(a.workdir, auto_install=a.yes, confirm=confirm).run(a.repo, a.fresh, a.plan)
+    res = build.Builder(a.workdir, auto_install=a.yes, confirm=confirm,
+                        on_fail=None if a.no_ask else ask_retry).run(a.repo, a.fresh, a.plan)
     return 0 if res["ok"] else 1
 
 

@@ -152,6 +152,80 @@ class DownloadDialog(tk.Toplevel):
         self.destroy()
 
 
+class RetryDialog(tk.Toplevel):
+    """'This strategy failed - retry, try another way, or stop?'  R / T / S (Esc = stop)."""
+
+    def __init__(self, master, info):
+        super().__init__(master)
+        self.result = "stop"
+        remaining = info["remaining"]
+        self.title("Build failed")
+        self.configure(bg=FACE)
+        self.resizable(False, False)
+        self.transient(master)
+        body = ttk.Frame(self, padding=(16, 14, 16, 12))
+        body.pack(fill="both", expand=True)
+        took = fmt_secs(info["secs"]) if info["secs"] >= 1 else "under a second"
+        head = f"{info['plan']} didn't work (attempt {info['attempt']}, took {took})."
+        ttk.Label(body, text=head, wraplength=470, justify="left", font=FONT_B).pack(anchor="w")
+
+        box = tk.Frame(body, bg=BORDER)
+        box.pack(fill="x", pady=(8, 6))
+        lst = tk.Frame(box, bg=WHITE)
+        lst.pack(fill="x", padx=1, pady=1)
+        reasons = info["reasons"] or ["No known cause was recognised. The first error in the log shows what went wrong."]
+        for r in reasons[:4]:
+            tk.Label(lst, text="•  " + r, bg=WHITE, fg=TEXT, font=FONT, anchor="w", justify="left",
+                     wraplength=440).pack(fill="x", padx=8, pady=2)
+        if info["fixes"]:
+            note = "RepoHammer fixed: " + "; ".join(info["fixes"]) + ". Retrying should get further."
+        else:
+            note = ("Nothing was changed, so a retry will probably fail the same way, "
+                    "unless you fixed something yourself (for example, closed a program or reconnected).")
+        ttk.Label(body, text=note, style="Grey.TLabel", wraplength=470, justify="left").pack(anchor="w")
+        ttk.Label(body, text="A retry runs this strategy again; files already built are usually reused, "
+                  "so it's often faster.", style="Grey.TLabel", wraplength=470, justify="left").pack(anchor="w")
+
+        btns = ttk.Frame(body)
+        btns.pack(fill="x", pady=(12, 0))
+        retry = ttk.Button(btns, text="Retry", width=10, command=lambda: self._pick("retry"), underline=0)
+        retry.pack(side="left")
+        other = None
+        if remaining:
+            self.choice = ttk.Combobox(btns, state="readonly", width=28, values=remaining)
+            self.choice.current(0)
+            other = ttk.Button(btns, text="Try another way:", width=16, underline=0,
+                               command=lambda: self._pick(("plan", self.choice.get())))
+            other.pack(side="left", padx=(6, 4))
+            self.choice.pack(side="left")
+        stop = ttk.Button(btns, text="Stop", width=9, command=lambda: self._pick("stop"), underline=0)
+        stop.pack(side="right")
+        default = retry if (info["fixes"] or not other) else other
+        default.configure(style="Default.TButton")
+        keys = "Retry: R  ·  Another way: T  ·  Stop: S" if other else "Retry: R  ·  Stop: S"
+        ttk.Label(body, text=keys, style="Grey.TLabel").pack(anchor="w", pady=(6, 0))
+        self.bind("<Key-r>", lambda _e: self._pick("retry"))
+        self.bind("<Key-R>", lambda _e: self._pick("retry"))
+        if other:
+            self.bind("<Key-t>", lambda _e: other.invoke())
+            self.bind("<Key-T>", lambda _e: other.invoke())
+        for k in ("<Key-s>", "<Key-S>", "<Escape>"):
+            self.bind(k, lambda _e: self._pick("stop"))
+        self.bind("<Return>", lambda _e: default.invoke())
+        self.protocol("WM_DELETE_WINDOW", lambda: self._pick("stop"))
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        default.focus_set()
+        self.grab_set()
+        self.wait_window()
+
+    def _pick(self, choice):
+        self.result = choice
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -281,9 +355,11 @@ class App(tk.Tk):
         opts.pack(fill="x", pady=(8, 0))
         self.ask_dl = tk.BooleanVar(value=self.settings.get("ask_downloads", True))
         self.fresh = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opts, text="Ask before downloading tools", variable=self.ask_dl).pack(side="left")
+        ttk.Checkbutton(opts, text="Ask before downloads", variable=self.ask_dl).pack(side="left")
+        self.ask_fail = tk.BooleanVar(value=self.settings.get("ask_on_fail", True))
+        ttk.Checkbutton(opts, text="Ask when a build fails", variable=self.ask_fail).pack(side="left", padx=(12, 0))
         ttk.Checkbutton(opts, text="Fresh clone", variable=self.fresh).pack(side="left", padx=(12, 0))
-        self.strategy = ttk.Combobox(opts, state="readonly", width=30, values=["Automatic (best first)"])
+        self.strategy = ttk.Combobox(opts, state="readonly", width=22, values=["Automatic (best first)"])
         self.strategy.current(0)
         self.strategy.pack(side="right")
         ttk.Label(opts, text="Strategy:").pack(side="right", padx=(0, 6))
@@ -449,8 +525,25 @@ class App(tk.Tk):
         ask = self.ask_dl.get()
         self.builder = build.Builder(wd, log=lambda m: self.q.put(("log", m)), auto_install=not ask,
                                      on_event=lambda *a: self.q.put(("event", a)),
-                                     confirm=self._confirm_from_worker if ask else None)
+                                     confirm=self._confirm_from_worker if ask else None,
+                                     on_fail=self._fail_from_worker if self.ask_fail.get() else None)
         return self.builder
+
+    # ------------------------------------------------------------ retry question
+    def _fail_from_worker(self, info):
+        """Called on the build thread after a strategy fails: ask retry / another way / stop."""
+        answer, done = ["stop"], threading.Event()
+        self.q.put(("fail", (info, answer, done)))
+        done.wait()
+        return answer[0]
+
+    def _ask_retry(self, info, answer, done):
+        started = time.time()
+        answer[0] = RetryDialog(self, info).result
+        self.t_start += time.time() - started  # time spent deciding isn't build time
+        if answer[0] != "stop":
+            self.estimate = None  # the old estimate no longer fits; the next strategy sets a new one
+        done.set()
 
     # ------------------------------------------------------------ download question
     def _confirm_from_worker(self, items, context):
@@ -506,7 +599,7 @@ class App(tk.Tk):
         b = self._new_builder()
         if not b:
             return
-        self.settings.update(ask_downloads=self.ask_dl.get())
+        self.settings.update(ask_downloads=self.ask_dl.get(), ask_on_fail=self.ask_fail.get())
         save_settings(self.settings)
         self._clear_log()
         choice = self.strategy.get()
@@ -581,6 +674,8 @@ class App(tk.Tk):
                     self._done(val)
                 elif kind == "ask":
                     self._ask_downloads(*val)
+                elif kind == "fail":
+                    self._ask_retry(*val)
                 elif kind == "tools":
                     self._waiting = max(0, self._waiting - 1)
                     self._fill_tools(val)

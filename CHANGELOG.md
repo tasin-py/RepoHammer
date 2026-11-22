@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+- When a build strategy fails, RepoHammer now asks what to do: **Retry**, **Try another way** (choose which strategy) or **Stop**. It shows why it failed, what it fixed and how long the attempt took. Untick **Ask when a build fails** to keep the old automatic behaviour.
+- On the command line, the same question appears as `[R]etry, [T]ry the next way, [S]top`. Use `--no-ask` to skip it.
+- The download checkbox is now called **Ask before downloads**, to make room for the new option.
+
 ## 1.1.0
 
 - RepoHammer now asks before it downloads anything. After it works out how to build a repo, it lists the tools it needs to download with their approximate sizes. Press **Y** to download them or **N** to skip them, and RepoHammer then tries other ways to build that don't need them.

@@ -25,8 +25,11 @@ class Cancelled(Exception):
 
 
 class Builder:
-    def __init__(self, workdir=DEFAULT_WORKDIR, log=print, auto_install=True, on_event=None, confirm=None):
+    def __init__(self, workdir=DEFAULT_WORKDIR, log=print, auto_install=True, on_event=None, confirm=None,
+                 on_fail=None):
         self.workdir = os.path.normpath(workdir)
+        # on_fail(info) -> 'retry' | 'next' | ('plan', name) | 'stop' lets the user decide after a failure.
+        self._on_fail = on_fail
         # confirm(items, context) -> bool asks the user before anything is downloaded.
         # items: [(id, label, approx size)]. Without it, auto_install decides.
         self._confirm = confirm
@@ -142,29 +145,56 @@ class Builder:
             out_dir = os.path.join(self.workdir, "output", name, stamp)
             any_ok = False
             self._why = []
+            stopped = False
             for cwd, group in groups.items():
-                for plan in group:
-                    self._check()
-                    started = time.time()
-                    self.event("plan", plan.name)
-                    self._tail = []
-                    ok = self._run_plan(plan)
-                    if not ok and not self._cancel.is_set():
-                        fixes = heal.heal(chr(10).join(self._tail), self)
-                        if fixes:
-                            self.log(f"[heal] retrying {plan.name} after {len(fixes)} fix(es)")
-                            self._tail = []
-                            ok = self._run_plan(plan)
-                    if not ok:
-                        self._why += heal.diagnose(chr(10).join(self._tail))
+                order = list(group)
+                i = 0
+                built_here = False
+                while i < len(order) and not stopped:
+                    plan = order[i]
+                    attempt = 0
+                    while True:
+                        self._check()
+                        started = time.time()
+                        self.event("plan", plan.name)
+                        self._tail = []
+                        attempt += 1
+                        ok = self._run_plan(plan)
+                        if ok:
+                            break
+                        self._check()
+                        tail = chr(10).join(self._tail)
+                        fixes = heal.heal(tail, self)
+                        reasons = heal.diagnose(tail)
+                        choice = self._after_failure(plan, order[i + 1:], fixes, reasons, attempt,
+                                                     time.time() - started)
+                        if choice == "retry":
+                            self.log(f"[build] retrying {plan.name} (attempt {attempt + 1})"
+                                     + (f" after {len(fixes)} fix(es)" if fixes else ""))
+                            continue
+                        self._why += reasons
+                        if choice == "stop":
+                            stopped = True
+                        elif isinstance(choice, tuple):  # ("plan", name): jump to that strategy next
+                            pick = next((p for p in order[i + 1:] if p.name == choice[1]), None)
+                            if pick:
+                                order.remove(pick)
+                                order.insert(i + 1, pick)
+                        break
                     if ok:
                         files = self._collect(plan, started, src, out_dir)
                         result["built"].append(plan.name)
                         result["artifacts"] += files
-                        any_ok = True
+                        any_ok = built_here = True
                         break
-                    self.log(f"[build] {plan.name} failed - trying the next strategy\n")
-                else:
+                    if stopped:
+                        self.log(f"[build] {plan.name} failed - stopping here, as you chose")
+                    elif i + 1 < len(order):
+                        self.log(f"[build] {plan.name} failed - trying {order[i + 1].name}\n")
+                    i += 1
+                if stopped:
+                    break
+                if not built_here:
                     self.log(f"[build] every strategy failed for {os.path.relpath(cwd, src)}")
             result["ok"] = any_ok
             result["output"] = out_dir if result["artifacts"] else ""
@@ -194,6 +224,24 @@ class Builder:
             result["secs"] = round(time.time() - t0)
             self._save_history(result)
         return result
+
+    def _after_failure(self, plan, remaining, fixes, reasons, attempt, secs):
+        """What to do after a strategy failed: 'retry', 'next', ('plan', name) or 'stop'.
+
+        With an on_fail callback the user decides; without one RepoHammer retries once,
+        and only when a fix was applied, then moves on to the next strategy."""
+        if self._on_fail:
+            info = {"plan": plan.name, "remaining": [p.name for p in remaining], "fixes": fixes,
+                    "reasons": reasons, "attempt": attempt, "secs": round(secs)}
+            try:
+                choice = self._on_fail(info)
+            except Exception:
+                choice = None
+            if choice in ("retry", "next", "stop") or (isinstance(choice, tuple) and choice[0] == "plan"):
+                if choice == "next" and not remaining:
+                    return "stop"
+                return choice
+        return "retry" if (fixes and attempt == 1) else "next"
 
     # ------------------------------------------------------------ plans
     def _check(self):
