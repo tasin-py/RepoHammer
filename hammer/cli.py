@@ -49,6 +49,31 @@ def ask_retry(info):
     return "stop"
 
 
+def ask_readme(cmds, fname):
+    """Terminal version of 'run the README's commands?'. Returns the indices to run."""
+    print()
+    print(f"RepoHammer didn't recognise how this project builds. Its {fname} suggests:")
+    for i, c in enumerate(cmds, 1):
+        tag = {"risky": f"  [careful: {c['why']}]", "unix": "  [Linux/macOS]"}.get(c["kind"], "")
+        print(f"  {i:>2}. {c['cmd']}{tag}")
+    safe = [i for i, c in enumerate(cmds) if c["kind"] == "ok"]
+    if not sys.stdin or not sys.stdin.isatty():
+        print("No terminal to answer in - not running them.")
+        return []
+    print("  Only the commands you pick run, in order, inside the project folder.")
+    try:
+        a = input(f"Run which? [Enter] = the {len(safe)} unmarked ones, numbers like 1,3, or N for none: ")
+    except EOFError:
+        return []
+    a = a.strip().lower()
+    if a == "":
+        return safe
+    if a in ("n", "no", "none"):
+        return []
+    picks = [int(x) - 1 for x in a.replace(",", " ").split() if x.isdigit() and 1 <= int(x) <= len(cmds)]
+    return sorted(dict.fromkeys(picks))
+
+
 def main(argv):
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -63,7 +88,8 @@ def main(argv):
     b.add_argument("--no-install", action="store_true", help="never download tools (answer No)")
     b.add_argument("--fresh", action="store_true", help="delete any previous clone first")
     b.add_argument("--no-ask", action="store_true",
-                   help="don't ask after a failure: retry once if a fix was applied, then try the next way")
+                   help="don't ask questions during the build: after a failure retry once if a fix was "
+                        "applied, then try the next way; never run README commands")
     b.add_argument("--plan", help="force a specific strategy by name")
     b.add_argument("--workdir", default=build.DEFAULT_WORKDIR)
     d = sub.add_parser("detect", help="show how a repository would be built")
@@ -87,7 +113,8 @@ def main(argv):
         return 0 if plans else 1
     confirm = None if (a.yes or a.no_install) else ask
     res = build.Builder(a.workdir, auto_install=a.yes, confirm=confirm,
-                        on_fail=None if a.no_ask else ask_retry).run(a.repo, a.fresh, a.plan)
+                        on_fail=None if a.no_ask else ask_retry,
+                        on_readme=None if a.no_ask else ask_readme).run(a.repo, a.fresh, a.plan)
     return 0 if res["ok"] else 1
 
 

@@ -48,6 +48,7 @@ It's one small Python app with no packages to install. It uses about 45 MB of RA
 
 - **Asks before downloading anything.** After checking the repo, RepoHammer lists the tools it needs with their approximate sizes. Press **Y** to download them with winget (Git, Node, the right .NET SDK, Visual Studio Build Tools, CMake, Inno Setup and more), or **N** to skip them and try other ways to build.
 - **You decide what happens after a failure.** Each step has fallbacks (for example `npm ci` → `npm install` → `npm install --legacy-peer-deps`). If a whole strategy still fails, RepoHammer shows why and asks: **Retry**, **Try another way** (pick from the other strategies) or **Stop**. Untick **Ask when a build fails** to let it retry once after a fix and then move on by itself.
+- **Falls back to the README.** If RepoHammer can't recognise how a project builds, it lists the commands the project's README suggests and asks which ones to run. Commands that need admin rights, run scripts from the internet, delete files or only work on Linux/macOS are marked and start unticked. Python commands run in a private environment, so they don't change your Python.
 - **Fixes common failures by itself:** missing .NET Framework reference assemblies, a newer .NET SDK needed, no Rust toolchain selected, Git long-path and ownership errors, and old webpack OpenSSL errors.
 - **Explains failures it can't fix,** for example *"The source code is incomplete: the project expects 3 file(s) that aren't in the download."*
 - **Collects the results** into `output\<repo>\<time>\`, with a full log of every build.
@@ -70,6 +71,10 @@ Before anything is downloaded, RepoHammer asks:
 If a strategy fails, it tells you why and lets you choose what happens next:
 
 <p align="center"><img src="docs/screenshots/retry-question.png" alt="Build failed dialog with the reason, the fix RepoHammer applied, and Retry, Try another way and Stop buttons" width="596"></p>
+
+If it can't recognise how a project builds, it offers the README's own commands and runs only the ones you tick:
+
+<p align="center"><img src="docs/screenshots/readme-question.png" alt="Dialog listing a README's commands with tick boxes; risky and Linux-only commands are marked and unticked" width="535"></p>
 
 ## Install
 
@@ -131,10 +136,12 @@ Building a project runs that project's own build scripts on your PC, with your u
 The latest changes, ready to copy:
 
 ```text
-1.2.0
-- When a build strategy fails, RepoHammer now asks what to do: Retry, Try another way (choose which strategy) or Stop. It shows why it failed, what it fixed and how long the attempt took. Untick "Ask when a build fails" to keep the old automatic behaviour.
-- On the command line, the same question appears as [R]etry, [T]ry the next way, [S]top. Use --no-ask to skip it.
-- The download checkbox is now called "Ask before downloads", to make room for the new option.
+1.3.0
+- If RepoHammer can't recognise how a project builds, it now offers the commands from the project's README. You tick which ones run; nothing runs without your OK.
+- Commands that need admin rights, run a script from the internet, delete files, install programs for the whole PC, or only work on Linux/macOS are marked and start unticked.
+- Python commands from a README run in a private environment (.rf-venv) inside the project, so they don't change your own Python.
+- Detect lists the README's commands when nothing else is recognised.
+- On the command line you pick the commands by number. --no-ask never runs README commands.
 ```
 
 The full history is in [CHANGELOG.md](CHANGELOG.md).

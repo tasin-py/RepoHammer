@@ -9,7 +9,7 @@ import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 from . import (APP_NAME, APP_REPO_URL, AUTHOR, AUTHOR_GITHUB, COFFEE_URL, DESCRIPTION, LICENSE,
-               VERSION, build, detect, fetch, toolchain, updater)
+               VERSION, build, detect, fetch, readme, toolchain, updater)
 
 SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RepoHammer", "settings.json")
 
@@ -223,6 +223,67 @@ class RetryDialog(tk.Toplevel):
 
     def _pick(self, choice):
         self.result = choice
+        self.destroy()
+
+
+class ReadmeDialog(tk.Toplevel):
+    """'The README suggests these commands - run the ticked ones?'  Enter = run, Esc = don't run."""
+
+    TAGS = {"unix": ("Linux/macOS", "#6D6D6D"), "risky": ("Careful", "#B00000")}
+
+    def __init__(self, master, cmds, fname):
+        super().__init__(master)
+        self.result = []
+        self.title("Run the README's commands?")
+        self.configure(bg=FACE)
+        self.resizable(False, False)
+        self.transient(master)
+        body = ttk.Frame(self, padding=(16, 14, 16, 12))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"RepoHammer didn't recognise how this project builds. Its {fname} suggests "
+                  "these commands:", wraplength=520, justify="left", font=FONT_B).pack(anchor="w")
+        box = tk.Frame(body, bg=BORDER)
+        box.pack(fill="x", pady=(8, 6))
+        lst = tk.Frame(box, bg=WHITE)
+        lst.pack(fill="x", padx=1, pady=1)
+        lst.columnconfigure(1, weight=1)
+        self.vars = []
+        for i, c in enumerate(cmds):
+            v = tk.BooleanVar(value=c["kind"] == "ok")
+            self.vars.append(v)
+            tk.Checkbutton(lst, variable=v, bg=WHITE, activebackground=WHITE, highlightthickness=0,
+                           bd=0).grid(row=i, column=0, sticky="w", padx=(6, 2), pady=2)
+            tk.Label(lst, text=c["cmd"], bg=WHITE, fg=TEXT, font=MONO, anchor="w", justify="left",
+                     wraplength=380).grid(row=i, column=1, sticky="w", pady=2)
+            if c["kind"] in self.TAGS:
+                tag, color = self.TAGS[c["kind"]]
+                tk.Label(lst, text=f"{tag}: {c['why']}" if c["kind"] == "risky" else tag, bg=WHITE, fg=color,
+                         font=FONT, wraplength=150, justify="right").grid(row=i, column=2, sticky="e",
+                                                                          padx=(8, 8), pady=2)
+        for line in ("Only ticked commands run, in this order, inside the project folder, with your permissions.",
+                     "Commands marked Careful or Linux/macOS start unticked. Python commands use a private "
+                     "environment, so they don't change your Python."):
+            ttk.Label(body, text=line, style="Grey.TLabel", wraplength=520, justify="left").pack(anchor="w")
+        btns = ttk.Frame(body)
+        btns.pack(fill="x", pady=(12, 0))
+        no = ttk.Button(btns, text="Don't run", width=11, command=self.destroy)
+        no.pack(side="right")
+        run = ttk.Button(btns, text="Run ticked", width=13, style="Default.TButton", command=self._run)
+        run.pack(side="right", padx=(0, 6))
+        ttk.Label(btns, text="Enter runs  ·  Esc cancels", style="Grey.TLabel").pack(side="left")
+        self.bind("<Return>", lambda _e: self._run())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        run.focus_set()
+        self.grab_set()
+        self.wait_window()
+
+    def _run(self):
+        self.result = [i for i, v in enumerate(self.vars) if v.get()]
         self.destroy()
 
 
@@ -526,8 +587,23 @@ class App(tk.Tk):
         self.builder = build.Builder(wd, log=lambda m: self.q.put(("log", m)), auto_install=not ask,
                                      on_event=lambda *a: self.q.put(("event", a)),
                                      confirm=self._confirm_from_worker if ask else None,
-                                     on_fail=self._fail_from_worker if self.ask_fail.get() else None)
+                                     on_fail=self._fail_from_worker if self.ask_fail.get() else None,
+                                     on_readme=self._readme_from_worker)
         return self.builder
+
+    # ------------------------------------------------------------ README commands question
+    def _readme_from_worker(self, cmds, fname):
+        """Called on the build thread when nothing was recognised: which README commands may run?"""
+        answer, done = [[]], threading.Event()
+        self.q.put(("readme", (cmds, fname, answer, done)))
+        done.wait()
+        return answer[0]
+
+    def _ask_readme(self, cmds, fname, answer, done):
+        started = time.time()
+        answer[0] = ReadmeDialog(self, cmds, fname).result
+        self.t_start += time.time() - started  # time spent deciding isn't build time
+        done.set()
 
     # ------------------------------------------------------------ retry question
     def _fail_from_worker(self, info):
@@ -586,6 +662,11 @@ class App(tk.Tk):
                           (", ".join(f"{label} (~{size})" for _k, label, size in need) if need else "nothing"))
                 if not plans:
                     b.log("[detect] nothing recognisable found")
+                    found = readme.commands(src)
+                    if found:
+                        b.log(f"[detect] {found[0]} suggests these commands; Build asks which ones to run:")
+                        for c in found[1]:
+                            b.log(f"    {c['cmd']}" + (f"   ({c['why']})" if c["why"] else ""))
                 self.q.put(("plans", (spec, plans)))
             except Exception as e:
                 b.log(f"[error] {e}")
@@ -676,6 +757,8 @@ class App(tk.Tk):
                     self._ask_downloads(*val)
                 elif kind == "fail":
                     self._ask_retry(*val)
+                elif kind == "readme":
+                    self._ask_readme(*val)
                 elif kind == "tools":
                     self._waiting = max(0, self._waiting - 1)
                     self._fill_tools(val)

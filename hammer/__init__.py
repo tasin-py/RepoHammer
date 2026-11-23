@@ -1,7 +1,7 @@
 """RepoHammer - build any GitHub repository locally, automatically."""
 
 APP_NAME = "RepoHammer"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DESCRIPTION = ("Paste a GitHub link and RepoHammer clones it, detects how it builds, "
                "asks before downloading any missing tools, and compiles it on your own PC.")
 LICENSE = "MIT"

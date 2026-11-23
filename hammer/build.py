@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-from . import detect, fetch, heal, toolchain
+from . import detect, fetch, heal, readme, toolchain
 
 IS_WIN = os.name == "nt"
 DEFAULT_WORKDIR = os.path.join(os.path.expanduser("~"), "RepoHammer")
@@ -26,10 +26,12 @@ class Cancelled(Exception):
 
 class Builder:
     def __init__(self, workdir=DEFAULT_WORKDIR, log=print, auto_install=True, on_event=None, confirm=None,
-                 on_fail=None):
+                 on_fail=None, on_readme=None):
         self.workdir = os.path.normpath(workdir)
         # on_fail(info) -> 'retry' | 'next' | ('plan', name) | 'stop' lets the user decide after a failure.
         self._on_fail = on_fail
+        # on_readme(commands, readme name) -> indices of the README commands the user approved to run.
+        self._on_readme = on_readme
         # confirm(items, context) -> bool asks the user before anything is downloaded.
         # items: [(id, label, approx size)]. Without it, auto_install decides.
         self._confirm = confirm
@@ -134,18 +136,18 @@ class Builder:
             plans = plans if plans is not None else detect.detect(src)
             if only:
                 plans = [p for p in plans if p.name == only] or plans
-            if not plans:
-                self.log("[detect] could not recognise any build system in this repository.")
-                self._readme_hint(src)
-                return result
-            groups = {}
-            for p in plans:
-                groups.setdefault(p.cwd, []).append(p)
-            self.log(f"[detect] {len(plans)} plan(s) in {len(groups)} project folder(s)")
             out_dir = os.path.join(self.workdir, "output", name, stamp)
             any_ok = False
             self._why = []
             stopped = False
+            groups = {}
+            for p in plans:
+                groups.setdefault(p.cwd, []).append(p)
+            if plans:
+                self.log(f"[detect] {len(plans)} plan(s) in {len(groups)} project folder(s)")
+            else:
+                self.log("[detect] could not recognise any build system in this repository.")
+                any_ok = self._readme_build(src, out_dir, result)
             for cwd, group in groups.items():
                 order = list(group)
                 i = 0
@@ -396,17 +398,85 @@ class Builder:
         except OSError:
             return False
 
-    def _readme_hint(self, src):
-        for n in os.listdir(src):
-            if n.lower().startswith("readme"):
-                text = open(os.path.join(src, n), encoding="utf-8", errors="replace").read()
-                blocks = re.findall(r"```(?:sh|bash|shell|console|powershell|cmd)?\n(.*?)```", text, re.S)
-                cmds = [b.strip() for b in blocks if re.search(r"\b(build|make|install|compile)\b", b)][:4]
-                if cmds:
-                    self.log("[hint] the README mentions these build commands:")
-                    for c in cmds:
-                        self.log("    " + c.replace("\n", "\n    "))
-                break
+    # ------------------------------------------------------------ README commands
+    def _readme_build(self, src, out_dir, result):
+        """No build system recognised: offer the README's commands. Only the ones the user ticks run."""
+        found = readme.commands(src)
+        if not found:
+            self.log("[readme] the README doesn't list any build commands either.")
+            return False
+        fname, cmds = found
+        self.log(f"[readme] {fname} suggests {len(cmds)} command(s):")
+        for c in cmds:
+            self.log(f"    {c['cmd']}" + (f"   ({c['why']})" if c["why"] else ""))
+        picks = None
+        if self._on_readme:
+            try:
+                picks = self._on_readme(cmds, fname)
+            except Exception:
+                picks = None
+        if not picks:
+            self.log("[readme] none of them were run" +
+                     ("" if self._on_readme else " (RepoHammer only runs README commands you approve)"))
+            self._why.append("RepoHammer didn't recognise how this project builds, and the README's "
+                             "commands weren't run.")
+            return False
+        self._check()
+        started = time.time()
+        self.event("plan", "README commands")
+        cwd, env = src, {}
+        chosen = [cmds[i] for i in picks]
+        if any(readme.tool_for(c["cmd"]) == "python" for c in chosen):
+            env = self._readme_venv(src)   # pip installs go into the project, not your Python
+        for n, c in enumerate(chosen, 1):
+            self._check()
+            self.event("step", n, len(chosen))
+            cmd = c["cmd"]
+            self.log(f"[readme {n}/{len(chosen)}] $ {cmd}")
+            m = re.match(r"(?:cd|chdir|Set-Location|pushd)(?:\s+/d)?\s+[\"']?([^\"'&|;]+?)[\"']?\s*$", cmd, re.I)
+            if m:
+                target = os.path.normpath(os.path.join(cwd, os.path.expanduser(m.group(1).strip())))
+                if os.path.isdir(target) and os.path.normcase(target).startswith(os.path.normcase(src)):
+                    cwd = target
+                    self.log(f"  now in {os.path.relpath(cwd, src)}")
+                else:
+                    self.log("  skipped: that folder isn't in the project (it's probably the repo folder itself)")
+                continue
+            tool = readme.tool_for(cmd)
+            if tool and not self.need(tool, f"to run '{cmd}' from the README"):
+                self._why.append(f"The README command '{cmd}' needs {toolchain.about(tool)[0]}, "
+                                 "which isn't installed.")
+                return False
+            if c["shell"] == "powershell":
+                cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "' + cmd.replace('"', '\\"') + '"'
+            elif c["shell"] == "bash":
+                bash = toolchain.find("bash")
+                if not bash:
+                    self.log("  skipped: this is a Linux/macOS command and Git Bash isn't installed")
+                    continue
+                cmd = f'"{bash}" -lc "' + cmd.replace('"', '\\"') + '"'
+            self._tail = []
+            if not self._exec(cmd, cwd, env):
+                self._why += heal.diagnose(chr(10).join(self._tail))
+                self._why.append(f"The README command '{c['cmd']}' failed.")
+                return False
+        plan = detect.Plan("README commands", src, [])
+        result["built"].append("README commands")
+        result["artifacts"] += self._collect(plan, started, src, out_dir)
+        return True
+
+    def _readme_venv(self, src):
+        """A private Python environment in the project, so README pip commands don't touch your Python."""
+        venv = os.path.join(src, ".rf-venv")
+        scripts = os.path.join(venv, "Scripts" if IS_WIN else "bin")
+        if not os.path.isdir(scripts):
+            if not self.need("python", "to run the README's Python commands"):
+                return {}
+            self.log("[readme] creating a private Python environment (.rf-venv) for this project")
+            self._exec(f'"{toolchain.find("python")}" -m venv .rf-venv', src, {})
+        if not os.path.isdir(scripts):
+            return {}
+        return {"VIRTUAL_ENV": venv, "PATH": scripts + os.pathsep + os.environ.get("PATH", "")}
 
     def _save_history(self, result):
         path = os.path.join(self.workdir, "history.json")

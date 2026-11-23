@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- If RepoHammer can't recognise how a project builds, it now offers the commands from the project's README. You tick which ones run; nothing runs without your OK.
+- Commands that need admin rights, run a script from the internet, delete files, install programs for the whole PC, or only work on Linux/macOS are marked and start unticked.
+- Python commands from a README run in a private environment (`.rf-venv`) inside the project, so they don't change your own Python.
+- **Detect** lists the README's commands when nothing else is recognised.
+- On the command line you pick the commands by number. `--no-ask` never runs README commands.
+
 ## 1.2.0
 
 - When a build strategy fails, RepoHammer now asks what to do: **Retry**, **Try another way** (choose which strategy) or **Stop**. It shows why it failed, what it fixed and how long the attempt took. Untick **Ask when a build fails** to keep the old automatic behaviour.
